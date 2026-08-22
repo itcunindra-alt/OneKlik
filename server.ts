@@ -5,14 +5,15 @@ import { GoogleGenAI } from "@google/genai";
 import { jsonrepair } from "jsonrepair";
 import dotenv from "dotenv";
 import fs from "fs";
-import { getApps, initializeApp } from "firebase-admin/app";
+import { getApps, initializeApp, cert } from "firebase-admin/app";
+import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
 // User Database and Token Helpers
-const USERS_FILE = path.join(process.cwd(), "users.json");
-const FIREBASE_CONFIG_FILE = path.join(process.cwd(), "firebase-applet-config.json");
+const USERS_FILE = process.env.NETLIFY ? path.join("/tmp", "users.json") : path.join(process.cwd(), "users.json");
+const FIREBASE_CONFIG_FILE = process.env.NETLIFY ? path.resolve(__dirname, "firebase-applet-config.json") : path.join(process.cwd(), "firebase-applet-config.json");
 let db: any = null;
 let isFirestoreAvailable = true;
 
@@ -22,17 +23,26 @@ function getDb() {
   try {
     if (fs.existsSync(FIREBASE_CONFIG_FILE)) {
       const config = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_FILE, "utf-8"));
+      const saStr = process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT;
       if (getApps().length === 0) {
-        initializeApp({
-          projectId: config.projectId,
-        });
+        if (saStr) {
+          initializeApp({
+            credential: cert(JSON.parse(saStr)),
+            // If they provided a custom service account, they likely want the default database in that project
+            projectId: JSON.parse(saStr).project_id || config.projectId
+          });
+        } else {
+          initializeApp({
+            projectId: config.projectId,
+          });
+        }
       }
-      if (config.firestoreDatabaseId) {
+      if (config.firestoreDatabaseId && !process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT && !process.env.FIREBASE_SERVICE_ACCOUNT) {
         db = getFirestore(getApps()[0], config.firestoreDatabaseId);
       } else {
         db = getFirestore();
       }
-      console.log("Firebase Admin successfully initialized on Firestore database ID:", config.firestoreDatabaseId || "(default)");
+      console.log("Firebase Admin successfully initialized.");
     } else {
       console.warn("firebase-applet-config.json not found, falling back to local users.json");
       isFirestoreAvailable = false;
@@ -156,6 +166,16 @@ async function saveUsers(users: any[]) {
 
 function parseToken(token: string): any {
   try {
+    if (token.includes(".")) {
+      const payloadBase64 = token.split(".")[1];
+      const decoded = JSON.parse(Buffer.from(payloadBase64, "base64").toString("utf-8"));
+      return {
+        id: decoded.user_id || decoded.sub,
+        email: decoded.email,
+        name: decoded.name || decoded.email,
+        role: decoded.email === "admin@gmail.com" ? "admin" : "user",
+      };
+    }
     const decoded = JSON.parse(Buffer.from(token, "base64").toString("utf-8"));
     return decoded;
   } catch (e) {
@@ -171,16 +191,7 @@ function refreshUserCreditsIfNeeded(user: any): boolean {
 
   if (!user.lastCreditResetAt) {
     user.lastCreditResetAt = user.createdAt || new Date().toISOString();
-    if (user.credits === undefined) user.credits = 20;
-    modified = true;
-  }
-
-  const lastReset = new Date(user.lastCreditResetAt).getTime();
-  const hours24 = 24 * 60 * 60 * 1000;
-
-  if (now - lastReset >= hours24) {
-    user.credits = 20;
-    user.lastCreditResetAt = new Date().toISOString();
+    if (user.credits === undefined) user.credits = 30; // 3 generations
     modified = true;
   }
 
@@ -601,13 +612,13 @@ export async function createServerApp() {
         return res.status(401).json({ success: false, error: "Email/Username atau password salah." });
       }
 
-      // Check account expiration for self-registered users (valid for 2 days)
+      // Check account expiration for self-registered users (valid for 1 day)
       if (user.expiresAt) {
         const expiryDate = new Date(user.expiresAt);
         if (expiryDate < new Date()) {
           return res.status(403).json({ 
             success: false, 
-            error: `Akun sementara Anda telah kedaluwarsa pada ${expiryDate.toLocaleString("id-ID")}. Akun mandiri hanya berlaku selama 2 hari.` 
+            error: `Akun sementara Anda telah kedaluwarsa pada ${expiryDate.toLocaleString("id-ID")}. Akun mandiri hanya berlaku selama 1 hari.` 
           });
         }
       }
@@ -629,7 +640,7 @@ export async function createServerApp() {
           email: user.email,
           role: user.role,
           expiresAt: user.expiresAt || null,
-          credits: user.credits ?? (user.expiresAt ? 20 : undefined)
+          credits: user.credits ?? (user.expiresAt ? 30 : undefined)
         }
       });
     } catch (err: any) {
@@ -637,7 +648,7 @@ export async function createServerApp() {
     }
   });
 
-  // API: User Self-Registration (creates account valid for exactly 2 days)
+  // API: User Self-Registration (creates account valid for exactly 1 day)
   app.post("/api/auth/register", async (req, res) => {
     try {
       const { name, email, password } = req.body;
@@ -651,9 +662,9 @@ export async function createServerApp() {
         return res.status(400).json({ success: false, error: "Alamat email ini sudah terdaftar." });
       }
 
-      // Calculate expiration: exactly 2 days from now
+      // Calculate expiration: exactly 1 day from now
       const createdAt = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString();
 
       const newUser = {
         id: "u-" + Math.random().toString(36).substring(2, 11),
@@ -662,8 +673,8 @@ export async function createServerApp() {
         password,
         role: "user",
         createdAt,
-        expiresAt, // 2 days expiration
-        credits: 20, // Akun mandiri mendapat 20 credit
+        expiresAt, // 1 day expiration
+        credits: 30, // Akun mandiri mendapat 30 credit
         lastCreditResetAt: createdAt
       };
 
@@ -749,7 +760,7 @@ export async function createServerApp() {
       if (user.expiresAt) {
         const expiryDate = new Date(user.expiresAt);
         if (expiryDate < new Date()) {
-          return res.status(401).json({ success: false, error: "Sesi Anda telah kedaluwarsa. Akun sementara 2 hari telah berakhir." });
+          return res.status(401).json({ success: false, error: "Sesi Anda telah kedaluwarsa. Akun sementara 1 hari telah berakhir." });
         }
       }
 
@@ -765,7 +776,7 @@ export async function createServerApp() {
           email: user.email,
           role: user.role,
           expiresAt: user.expiresAt || null,
-          credits: user.credits ?? (user.expiresAt ? 20 : undefined)
+          credits: user.credits ?? (user.expiresAt ? 30 : undefined)
         }
       });
     } catch (err: any) {
@@ -805,8 +816,31 @@ export async function createServerApp() {
         return res.status(400).json({ success: false, error: "Alamat email ini sudah terdaftar." });
       }
 
+      let uid = "u-" + Math.random().toString(36).substring(2, 11);
+      
+      // Connect to Firebase Authentication
+      if (getApps().length > 0) {
+        if (!process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT) {
+          return res.status(500).json({ success: false, error: "Gagal membuat pengguna di Firebase Auth karena ketiadaan akses Admin. Silakan tambahkan Service Account proyek Firebase Anda ke menu 'Settings > API Keys' di pojok kanan atas dengan nama: CUSTOM_FIREBASE_SERVICE_ACCOUNT." });
+        }
+        try {
+          const fbUser = await getAdminAuth().createUser({
+            email,
+            password,
+            displayName: name
+          });
+          uid = fbUser.uid;
+        } catch (fbErr: any) {
+          if (fbErr.code === "auth/email-already-exists") {
+            return res.status(400).json({ success: false, error: "Alamat email ini sudah terdaftar di Firebase." });
+          }
+          console.error("Firebase Auth create error:", fbErr);
+          return res.status(500).json({ success: false, error: "Gagal membuat pengguna di Firebase Auth: " + fbErr.message });
+        }
+      }
+
       const newUser = {
-        id: "u-" + Math.random().toString(36).substring(2, 11),
+        id: uid,
         name,
         email,
         password,
@@ -844,6 +878,18 @@ export async function createServerApp() {
 
       if (id === "all-self-registered") {
         const users = await loadUsers();
+        const selfRegistered = users.filter((u: any) => u.expiresAt && u.id !== currentAdminId);
+        
+        if (getApps().length > 0 && process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT) {
+          for (const u of selfRegistered) {
+            try {
+              await getAdminAuth().deleteUser(u.id);
+            } catch (e) {
+              console.warn("Failed to delete user from Firebase Auth:", u.id);
+            }
+          }
+        }
+        
         // Keep only users that do not have expiresAt (not self registered), or the current admin
         const remainingUsers = users.filter((u: any) => !u.expiresAt || u.id === currentAdminId);
         await saveUsers(remainingUsers);
@@ -852,6 +898,18 @@ export async function createServerApp() {
 
       if (id === "all-users") {
         const users = await loadUsers();
+        const others = users.filter((u: any) => u.id !== currentAdminId);
+        
+        if (getApps().length > 0 && process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT) {
+          for (const u of others) {
+            try {
+              await getAdminAuth().deleteUser(u.id);
+            } catch (e) {
+              console.warn("Failed to delete user from Firebase Auth:", u.id);
+            }
+          }
+        }
+
         // Keep only the current admin
         const remainingUsers = users.filter((u: any) => u.id === currentAdminId);
         await saveUsers(remainingUsers);
@@ -866,6 +924,14 @@ export async function createServerApp() {
       const userIdx = users.findIndex((u: any) => u.id === id);
       if (userIdx === -1) {
         return res.status(404).json({ success: false, error: "Pengguna tidak ditemukan." });
+      }
+      
+      if (getApps().length > 0 && process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT) {
+        try {
+          await getAdminAuth().deleteUser(id);
+        } catch (e) {
+          console.warn("Failed to delete user from Firebase Auth:", id);
+        }
       }
 
       users.splice(userIdx, 1);
@@ -1184,9 +1250,9 @@ Return ONLY the raw JSON string, no markdown backticks.`;
             // First refresh credits if needed
             refreshUserCreditsIfNeeded(user);
             
-            const currentCredits = user.credits ?? 20;
+            const currentCredits = user.credits ?? 30;
             if (currentCredits < 10) {
-              return res.status(403).json({ success: false, error: "Credit tidak cukup. Akun mandiri Anda memiliki sisa " + currentCredits + " credit. 1 kali generate vidio prompt membutuhkan 10 credit. Credit Anda akan direset setiap 24 jam." });
+              return res.status(403).json({ success: false, error: "Credit tidak cukup. Akun mandiri Anda memiliki sisa " + currentCredits + " credit. 1 kali generate vidio prompt membutuhkan 10 credit. Akun mandiri hanya memiliki 3 kali kesempatan (30 credit) per pendaftaran." });
             }
             // Deduct credits
             users[userIndex].credits = currentCredits - 10;

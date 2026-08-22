@@ -4,6 +4,9 @@
  */
 
 import React, { useState, useEffect } from "react";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { auth, db } from "./lib/firebase";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import { ProcessingLoader } from "./components/ProcessingLoader";
 import { 
   Users, 
@@ -234,52 +237,58 @@ export default function App() {
 
   // Authenticate on load
   useEffect(() => {
-    const checkAuth = async () => {
-      // First, sync any users from local backup to the server to prevent data loss on container resets
-      const localBackupRaw = localStorage.getItem("adin-story-local-users-backup");
-      if (localBackupRaw) {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
         try {
-          const backupUsers = JSON.parse(localBackupRaw);
-          if (backupUsers.length > 0) {
-            await fetch("/api/auth/sync-backup", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ backupUsers })
+          const token = await user.getIdToken();
+          localStorage.setItem("adin-story-auth-token", token);
+          
+          // Fetch real user metadata from backend
+          const authRes = await fetch("/api/auth/me", {
+            headers: {
+              "Authorization": `Bearer ${token}`
+            }
+          });
+          if (authRes.ok) {
+            const authData = await authRes.json();
+            if (authData.success && authData.user) {
+              setCurrentUser(authData.user);
+            } else {
+              setCurrentUser({
+                id: user.uid,
+                name: user.displayName || user.email?.split("@")[0] || "User",
+                email: user.email || "",
+                role: user.email === "admin@gmail.com" ? "admin" : "user",
+                credits: 30
+              });
+            }
+          } else {
+            setCurrentUser({
+              id: user.uid,
+              name: user.displayName || user.email?.split("@")[0] || "User",
+              email: user.email || "",
+              role: user.email === "admin@gmail.com" ? "admin" : "user",
+              credits: 30
             });
           }
         } catch (e) {
-          console.error("Failed to sync local users backup:", e);
+          console.error("Failed to get token", e);
+          setCurrentUser({
+            id: user.uid,
+            name: user.displayName || user.email?.split("@")[0] || "User",
+            email: user.email || "",
+            role: user.email === "admin@gmail.com" ? "admin" : "user",
+            credits: 30
+          });
         }
+      } else {
+        localStorage.removeItem("adin-story-auth-token");
+        setCurrentUser(null);
       }
+      setCheckingAuth(false);
+    });
 
-      const token = localStorage.getItem("adin-story-auth-token");
-      if (!token) {
-        setCheckingAuth(false);
-        return;
-      }
-      try {
-        const res = await fetch("/api/auth/me", {
-          headers: {
-            "Authorization": `Bearer ${token}`
-          }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success) {
-            setCurrentUser(data.user);
-          } else {
-            localStorage.removeItem("adin-story-auth-token");
-          }
-        } else {
-          localStorage.removeItem("adin-story-auth-token");
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-      } finally {
-        setCheckingAuth(false);
-      }
-    };
-    checkAuth();
+    return () => unsubscribe();
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -291,22 +300,48 @@ export default function App() {
     setLoginLoading(true);
     setLoginError(null);
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        localStorage.setItem("adin-story-auth-token", data.token);
-        setCurrentUser(data.user);
-        setLoginEmail("");
-        setLoginPassword("");
+      await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      setLoginEmail("");
+      setLoginPassword("");
+    } catch (err: any) {
+      if (err.code === "auth/invalid-credential" || err.code === "auth/user-not-found" || err.code === "auth/wrong-password") {
+        setLoginError("Email atau password salah.");
       } else {
-        setLoginError(data.error || "Email atau password salah.");
+        setLoginError("Koneksi gagal. Silakan coba lagi.");
       }
-    } catch (err) {
-      setLoginError("Koneksi gagal. Silakan coba lagi.");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoginLoading(true);
+    setLoginError(null);
+    try {
+      const provider = new GoogleAuthProvider();
+      const userCredential = await signInWithPopup(auth, provider);
+      
+      const userDocRef = doc(db, "users", userCredential.user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (!userDocSnap.exists()) {
+        // Only set this initial data if the user is completely new
+        const createdAt = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString();
+        
+        await setDoc(userDocRef, {
+          name: userCredential.user.displayName || userCredential.user.email?.split("@")[0] || "User",
+          email: userCredential.user.email,
+          role: "user",
+          createdAt,
+          expiresAt,
+          credits: 30,
+          lastCreditResetAt: createdAt
+        });
+      }
+      
+    } catch (err: any) {
+      setLoginError("Gagal masuk dengan Google: " + err.message);
     } finally {
       setLoginLoading(false);
     }
@@ -321,56 +356,43 @@ export default function App() {
     setRegisterLoading(true);
     setRegisterError(null);
     try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          name: registerName, 
-          email: registerEmail, 
-          password: registerPassword 
-        })
+      const userCredential = await createUserWithEmailAndPassword(auth, registerEmail, registerPassword);
+      await updateProfile(userCredential.user, {
+        displayName: registerName
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        localStorage.setItem("adin-story-auth-token", data.token);
-        setCurrentUser(data.user);
+      
+      const createdAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString();
+      
+      await setDoc(doc(db, "users", userCredential.user.uid), {
+        name: registerName,
+        email: registerEmail,
+        role: "user",
+        createdAt,
+        expiresAt,
+        credits: 30,
+        lastCreditResetAt: createdAt
+      });
 
-        // Save to localStorage backup
-        const localBackupRaw = localStorage.getItem("adin-story-local-users-backup") || "[]";
-        try {
-          const localBackup = JSON.parse(localBackupRaw);
-          const userObj = {
-            id: data.user.id,
-            name: registerName,
-            email: registerEmail,
-            password: registerPassword, // Save the password too so they can log back in!
-            role: "user",
-            createdAt: new Date().toISOString(),
-            expiresAt: data.user.expiresAt
-          };
-          if (!localBackup.some((u: any) => u.email.toLowerCase() === registerEmail.toLowerCase())) {
-            localBackup.push(userObj);
-            localStorage.setItem("adin-story-local-users-backup", JSON.stringify(localBackup));
-          }
-        } catch (e) {
-          console.error("Failed to backup registered user:", e);
-        }
-
-        setRegisterName("");
-        setRegisterEmail("");
-        setRegisterPassword("");
-        setAuthMode("login");
+      setRegisterName("");
+      setRegisterEmail("");
+      setRegisterPassword("");
+      setAuthMode("login");
+    } catch (err: any) {
+      if (err.code === "auth/email-already-in-use") {
+        setRegisterError("Email sudah terdaftar.");
+      } else if (err.code === "auth/weak-password") {
+        setRegisterError("Password terlalu lemah (minimal 6 karakter).");
       } else {
-        setRegisterError(data.error || "Pendaftaran gagal.");
+        setRegisterError("Pendaftaran gagal. Silakan coba lagi.");
       }
-    } catch (err) {
-      setRegisterError("Koneksi gagal. Silakan coba lagi.");
     } finally {
       setRegisterLoading(false);
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await signOut(auth);
     localStorage.removeItem("adin-story-auth-token");
     setCurrentUser(null);
     setUsersList([]);
@@ -1183,7 +1205,7 @@ export default function App() {
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                 {authMode === "login" 
                   ? "Silakan masuk untuk melanjutkan pembuatan konten" 
-                  : "Daftar akun mandiri (Aktif selama 2 hari)"}
+                  : "Daftar akun mandiri (Aktif selama 1 hari)"}
               </p>
             </div>
 
@@ -1258,14 +1280,17 @@ export default function App() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => {
-                      setAuthMode("register");
-                      setRegisterError(null);
-                    }}
-                    className="w-full py-3 px-4 mt-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-sm font-semibold shadow-sm transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer"
+                    onClick={handleGoogleLogin}
+                    disabled={loginLoading}
+                    className="w-full py-3 px-4 mt-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-sm font-semibold shadow-sm transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
-                    <UserPlus className="w-4 h-4" />
-                    <span>Daftar Akun Mandiri (Aktif 2 Hari)</span>
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+                      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+                      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+                      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+                    </svg>
+                    <span>Daftar dengan akun google</span>
                   </button>
 
                   <div className="mt-4 pt-4 border-t border-dashed border-slate-150 dark:border-slate-800 w-full text-center">
