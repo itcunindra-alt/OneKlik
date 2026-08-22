@@ -1144,18 +1144,18 @@ export default function App() {
     return (
       <div 
         id="adin-story-engine-root" 
-        className={`min-h-screen w-full max-w-full  flex items-center justify-center font-sans antialiased selection:bg-blue-100 selection:text-blue-900 transition-colors duration-300 relative ${
+        className={`min-h-[100dvh] w-full max-w-full flex flex-col font-sans antialiased selection:bg-blue-100 selection:text-blue-900 transition-colors duration-300 relative overflow-y-auto ${
           theme === "dark" 
             ? "bg-slate-950 text-slate-100 dark" 
             : "bg-[#f8fafd] text-[#1e293b]"
         }`}
       >
         {/* Visual background accents */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-gradient-to-br from-blue-200/10 via-sky-300/5 to-transparent rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 left-[200px] w-[400px] h-[400px] bg-gradient-to-tr from-sky-200/10 via-indigo-200/5 to-transparent rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-gradient-to-br from-blue-200/10 via-sky-300/5 to-transparent rounded-full blur-3xl pointer-events-none fixed" />
+        <div className="absolute bottom-0 left-[200px] w-[400px] h-[400px] bg-gradient-to-tr from-sky-200/10 via-indigo-200/5 to-transparent rounded-full blur-3xl pointer-events-none fixed" />
 
-        <div className="w-full max-w-md p-6 relative z-10">
-          <div className={`p-8 rounded-2xl border shadow-xl transition-all duration-300 relative ${
+        <div className="w-full max-w-md p-4 sm:p-6 mx-auto my-auto relative z-10 min-h-max py-8">
+          <div className={`p-6 sm:p-8 rounded-2xl border shadow-xl transition-all duration-300 relative ${
             theme === "dark" 
               ? "bg-slate-900/90 border-slate-800 shadow-slate-950/50" 
               : "bg-white/95 border-slate-200 shadow-slate-200/50"

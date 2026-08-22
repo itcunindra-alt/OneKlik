@@ -533,9 +533,9 @@ function robustParseJson(str: string): any {
   }
 }
 
-async function startServer() {
+export async function createServerApp() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
 
@@ -1317,9 +1317,15 @@ Return ONLY the raw JSON string, no markdown backticks.`;
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Adin Story Engine] Server active at http://0.0.0.0:${PORT}`);
-  });
+  return app;
 }
 
-startServer();
+// Start the server if not running in a serverless environment (like Netlify)
+if (process.env.NODE_ENV !== "test" && !process.env.NETLIFY) {
+  createServerApp().then((app) => {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`[Adin Story Engine] Server active at http://0.0.0.0:${PORT}`);
+    });
+  });
+}
