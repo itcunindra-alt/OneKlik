@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from "react";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { auth, db } from "./lib/firebase";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import { ProcessingLoader } from "./components/ProcessingLoader";
 import { 
   Users, 
@@ -325,19 +325,37 @@ export default function App() {
       const userDocSnap = await getDoc(userDocRef);
 
       if (!userDocSnap.exists()) {
-        // Only set this initial data if the user is completely new
-        const createdAt = new Date().toISOString();
-        const expiresAt = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString();
-        
-        await setDoc(userDocRef, {
-          name: userCredential.user.displayName || userCredential.user.email?.split("@")[0] || "User",
-          email: userCredential.user.email,
-          role: "user",
-          createdAt,
-          expiresAt,
-          credits: 30,
-          lastCreditResetAt: createdAt
-        });
+        const usersRef = collection(db, "users");
+        const q = query(usersRef, where("email", "==", userCredential.user.email));
+        const querySnapshot = await getDocs(q);
+
+        if (!querySnapshot.empty) {
+          // Pre-registered by admin (with random u-ID). Migrate to new UID.
+          const oldDoc = querySnapshot.docs[0];
+          const oldData = oldDoc.data();
+          
+          await setDoc(userDocRef, {
+            ...oldData, // keep existing role, missing expiresAt, missing credits (if any)
+            name: userCredential.user.displayName || oldData.name || "User"
+          });
+          
+          // Delete old doc
+          await deleteDoc(oldDoc.ref);
+        } else {
+          // Only set this initial data if the user is completely new (self-registered)
+          const createdAt = new Date().toISOString();
+          const expiresAt = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString();
+          
+          await setDoc(userDocRef, {
+            name: userCredential.user.displayName || userCredential.user.email?.split("@")[0] || "User",
+            email: userCredential.user.email,
+            role: "user",
+            createdAt,
+            expiresAt,
+            credits: 30,
+            lastCreditResetAt: createdAt
+          });
+        }
       }
       
     } catch (err: any) {

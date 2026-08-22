@@ -575,7 +575,7 @@ export async function createServerApp() {
   });
 
   // Admin and Auth Middlewares & Endpoints
-  const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     try {
       const authHeader = req.headers["authorization"];
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -584,10 +584,20 @@ export async function createServerApp() {
 
       const token = authHeader.split(" ")[1];
       const decoded = parseToken(token);
-      if (!decoded || decoded.role !== "admin") {
+      if (!decoded || !decoded.id) {
+        return res.status(403).json({ success: false, error: "Token tidak valid." });
+      }
+
+      const users = await loadUsers();
+      // Find by ID, or fallback to email (for Google Auth users who haven't fully synced ID yet)
+      const user = users.find((u: any) => u.id === decoded.id || u.email === decoded.email);
+      
+      if (!user || user.role !== "admin") {
         return res.status(403).json({ success: false, error: "Akses ditolak. Hanya untuk Administrator." });
       }
 
+      // Optionally attach user to req for later use
+      (req as any).user = user;
       next();
     } catch (err) {
       return res.status(500).json({ success: false, error: "Kesalahan otorisasi." });
@@ -751,7 +761,11 @@ export async function createServerApp() {
       }
 
       const users = await loadUsers();
-      const user = users.find((u: any) => u.id === decoded.id);
+      let user = users.find((u: any) => u.id === decoded.id);
+      if (!user && decoded.email) {
+        user = users.find((u: any) => u.email === decoded.email);
+      }
+      
       if (!user) {
         return res.status(401).json({ success: false, error: "User tidak ditemukan." });
       }
@@ -819,10 +833,7 @@ export async function createServerApp() {
       let uid = "u-" + Math.random().toString(36).substring(2, 11);
       
       // Connect to Firebase Authentication
-      if (getApps().length > 0) {
-        if (!process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT) {
-          return res.status(500).json({ success: false, error: "Gagal membuat pengguna di Firebase Auth karena ketiadaan akses Admin. Silakan tambahkan Service Account proyek Firebase Anda ke menu 'Settings > API Keys' di pojok kanan atas dengan nama: CUSTOM_FIREBASE_SERVICE_ACCOUNT." });
-        }
+      if (getApps().length > 0 && process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT) {
         try {
           const fbUser = await getAdminAuth().createUser({
             email,
