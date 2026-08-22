@@ -385,7 +385,7 @@ export default function App() {
       await setDoc(doc(db, "users", userCredential.user.uid), {
         name: registerName,
         email: registerEmail,
-        role: "user",
+        role: registerEmail === "admin@gmail.com" ? "admin" : "user",
         createdAt,
         expiresAt,
         credits: 30,
@@ -496,10 +496,10 @@ export default function App() {
         setAdminNewRole("user");
         await fetchUsersList();
       } else {
-        setAdminError(data.error || "Gagal menambahkan user baru.");
+        setAdminError(data.error || `Error raw: ${JSON.stringify(data)} (status: ${res.status})`);
       }
-    } catch (err) {
-      setAdminError("Koneksi gagal.");
+    } catch (err: any) {
+      setAdminError(`Koneksi gagal: ${err.message}`);
     } finally {
       setAdminLoading(false);
     }

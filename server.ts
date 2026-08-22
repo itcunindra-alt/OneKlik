@@ -110,7 +110,7 @@ async function loadUsers(): Promise<any[]> {
           users.push({ id: docId, ...u });
         }
       }
-      return users;
+      return users.map(u => u.email === "admin@gmail.com" ? { ...u, role: "admin" } : u);
     } catch (err: any) {
       isFirestoreAvailable = false;
       console.warn("Firestore is not accessible (e.g. missing permissions or offline). Falling back to local database users.json.");
@@ -121,7 +121,8 @@ async function loadUsers(): Promise<any[]> {
   initUsersDb();
   try {
     const raw = fs.readFileSync(USERS_FILE, "utf-8");
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return parsed.map((u: any) => u.email === "admin@gmail.com" ? { ...u, role: "admin" } : u);
   } catch (e) {
     return [];
   }
@@ -546,7 +547,7 @@ function robustParseJson(str: string): any {
 
 export async function createServerApp() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = 3000;
 
   app.use(express.json());
 
@@ -592,7 +593,12 @@ export async function createServerApp() {
       // Find by ID, or fallback to email (for Google Auth users who haven't fully synced ID yet)
       const user = users.find((u: any) => u.id === decoded.id || u.email === decoded.email);
       
-      if (!user || user.role !== "admin") {
+      if (!user && decoded.email !== "admin@gmail.com") {
+        return res.status(403).json({ success: false, error: "Akses ditolak. Hanya untuk Administrator." });
+      }
+      
+      const isAdmin = (user && user.role === "admin") || decoded.email === "admin@gmail.com";
+      if (!isAdmin) {
         return res.status(403).json({ success: false, error: "Akses ditolak. Hanya untuk Administrator." });
       }
 
@@ -767,7 +773,15 @@ export async function createServerApp() {
       }
       
       if (!user) {
-        return res.status(401).json({ success: false, error: "User tidak ditemukan." });
+        if (decoded.email === "admin@gmail.com") {
+          user = { id: decoded.id, name: decoded.name || "Admin", email: decoded.email, role: "admin", credits: 30 };
+        } else {
+          return res.status(401).json({ success: false, error: "User tidak ditemukan." });
+        }
+      }
+
+      if (user.email === "admin@gmail.com") {
+        user.role = "admin";
       }
 
       // Check account expiration for self-registered users
@@ -818,15 +832,18 @@ export async function createServerApp() {
 
   // API: Create New User (Admin only)
   app.post("/api/admin/users", requireAdmin, async (req, res) => {
+    console.log("=> POST /api/admin/users called with body:", req.body);
     try {
       const { name, email, password, role } = req.body;
       if (!name || !email || !password || !role) {
+        console.log("<- 400 Missing fields");
         return res.status(400).json({ success: false, error: "Semua data wajib diisi (Nama, Email, Password, Peran)." });
       }
 
       const users = await loadUsers();
       const emailExists = users.some((u: any) => u.email.toLowerCase() === email.toLowerCase());
       if (emailExists) {
+        console.log("<- 400 Email exists");
         return res.status(400).json({ success: false, error: "Alamat email ini sudah terdaftar." });
       }
 
@@ -843,9 +860,11 @@ export async function createServerApp() {
           uid = fbUser.uid;
         } catch (fbErr: any) {
           if (fbErr.code === "auth/email-already-exists") {
+            console.log("<- 400 FB Email exists");
             return res.status(400).json({ success: false, error: "Alamat email ini sudah terdaftar di Firebase." });
           }
           console.error("Firebase Auth create error:", fbErr);
+          console.log("<- 500 FB Error");
           return res.status(500).json({ success: false, error: "Gagal membuat pengguna di Firebase Auth: " + fbErr.message });
         }
       }
@@ -862,6 +881,7 @@ export async function createServerApp() {
       users.push(newUser);
       await saveUsers(users);
 
+      console.log("<- 200 Success:", newUser.email);
       return res.json({
         success: true,
         user: {
@@ -873,6 +893,7 @@ export async function createServerApp() {
         }
       });
     } catch (err: any) {
+      console.log("<- 500 Catch error:", err.message);
       return res.status(500).json({ success: false, error: err.message || "Gagal menambahkan pengguna baru." });
     }
   });
@@ -1400,7 +1421,7 @@ Return ONLY the raw JSON string, no markdown backticks.`;
 // Start the server if not running in a serverless environment (like Netlify)
 if (process.env.NODE_ENV !== "test" && !process.env.NETLIFY) {
   createServerApp().then((app) => {
-    const PORT = process.env.PORT || 3000;
+    const PORT = 3000;
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`[Adin Story Engine] Server active at http://0.0.0.0:${PORT}`);
     });
