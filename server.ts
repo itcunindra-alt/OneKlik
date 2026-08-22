@@ -268,7 +268,7 @@ async function generateAiContent(
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${finalApiKey}`,
-          ...(channel === "OPENROUTER" && { "HTTP-Referer": "https://aistudio.google.com", "X-Title": "Adin Story Engine" })
+          ...(channel === "OPENROUTER" && { "HTTP-Referer": "https://aistudio.google.com", "X-Title": "AKAR Story Engine" })
         },
         body: JSON.stringify(payload)
       });
@@ -1423,7 +1423,7 @@ if (process.env.NODE_ENV !== "test" && !process.env.NETLIFY) {
   createServerApp().then((app) => {
     const PORT = 3000;
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`[Adin Story Engine] Server active at http://0.0.0.0:${PORT}`);
+      console.log(`[AKAR Story Engine] Server active at http://0.0.0.0:${PORT}`);
     });
   });
 }
