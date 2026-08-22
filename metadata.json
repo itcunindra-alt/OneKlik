@@ -1,0 +1,6 @@
+{
+  "name": "Adin Story Engine",
+  "description": "An advanced AI-powered assistant that designs target audience personas, trending topics, structured video short scripts, and generates optimized image/video prompt sheets for creators.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

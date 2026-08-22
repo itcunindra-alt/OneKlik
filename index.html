@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Google AI Studio App</title>
+    <script>
+      // Suppress benign Vite dev server/HMR websocket connection warnings and console logs
+      (function() {
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        const originalLog = console.log;
+
+        const shouldSuppress = (args) => {
+          return args.some(arg => {
+            if (!arg) return false;
+            const str = String(arg).toLowerCase();
+            return str.includes('websocket') || str.includes('vite') || str.includes('hmr');
+          });
+        };
+
+        console.error = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalError.apply(console, args);
+        };
+
+        console.warn = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalWarn.apply(console, args);
+        };
+
+        console.log = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalLog.apply(console, args);
+        };
+      })();
+
+      window.addEventListener('error', function(e) {
+        if (e.message && (e.message.toLowerCase().includes('websocket') || e.message.toLowerCase().includes('vite'))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(e) {
+        const reason = e.reason?.message || String(e.reason || '');
+        if (reason && (reason.toLowerCase().includes('websocket') || reason.toLowerCase().includes('vite'))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

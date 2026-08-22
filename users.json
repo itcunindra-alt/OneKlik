@@ -1,0 +1,27 @@
+[
+  {
+    "id": "u-admin",
+    "name": "Administrator",
+    "email": "admin@gmail.com",
+    "password": "admin",
+    "role": "admin",
+    "createdAt": "2026-07-08T18:05:59.824Z"
+  },
+  {
+    "id": "u-user",
+    "name": "Regular User",
+    "email": "user@gmail.com",
+    "password": "user123",
+    "role": "user",
+    "createdAt": "2026-07-08T18:05:59.824Z"
+  },
+  {
+    "id": "u-6khznauwc",
+    "name": "Gang_Perumahan",
+    "email": "vgr@gmail.com",
+    "password": "Vgr1234",
+    "role": "user",
+    "createdAt": "2026-07-08T18:11:15.075Z",
+    "expiresAt": "2026-07-10T18:11:15.075Z"
+  }
+]
