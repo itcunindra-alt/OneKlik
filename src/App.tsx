@@ -3172,7 +3172,7 @@ export default function App() {
 
       {/* Settings API Modal Overlay */}
       {showSettingsModal && (
-        <div id="settings-api-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div id="settings-api-modal" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           {/* Backdrop */}
           <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" onClick={() => setShowSettingsModal(false)} />
           
@@ -3385,7 +3385,7 @@ export default function App() {
       )}
 
       {showResetConfirm && (
-        <div id="reset-confirm-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div id="reset-confirm-modal" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           {/* Backdrop */}
           <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" onClick={() => setShowResetConfirm(false)} />
           
@@ -3432,7 +3432,7 @@ export default function App() {
       )}
 
       {showAdminModal && (
-        <div id="admin-user-manager-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div id="admin-user-manager-modal" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           {/* Backdrop */}
           <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" onClick={() => setShowAdminModal(false)} />
           
