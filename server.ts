@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { jsonrepair } from "jsonrepair";
 import dotenv from "dotenv";
@@ -12,7 +11,7 @@ import { getFirestore } from "firebase-admin/firestore";
 dotenv.config();
 
 // User Database and Token Helpers
-const USERS_FILE = process.env.NETLIFY ? path.join("/tmp", "users.json") : path.join(process.cwd(), "users.json");
+const USERS_FILE = process.env.NETLIFY || process.env.VERCEL ? path.join("/tmp", "users.json") : path.join(process.cwd(), "users.json");
 const FIREBASE_CONFIG_FILE = process.env.NETLIFY ? path.resolve(__dirname, "firebase-applet-config.json") : path.join(process.cwd(), "firebase-applet-config.json");
 let db: any = null;
 let isFirestoreAvailable = true;
@@ -1402,6 +1401,7 @@ Return ONLY the raw JSON string, no markdown backticks.`;
 
   // Serve Vite or static assets depending on environment
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1418,8 +1418,8 @@ Return ONLY the raw JSON string, no markdown backticks.`;
   return app;
 }
 
-// Start the server if not running in a serverless environment (like Netlify)
-if (process.env.NODE_ENV !== "test" && !process.env.NETLIFY) {
+// Start the server if not running in a serverless environment (like Netlify or Vercel)
+if (process.env.NODE_ENV !== "test" && !process.env.NETLIFY && !process.env.VERCEL) {
   createServerApp().then((app) => {
     const PORT = 3000;
     app.listen(PORT, "0.0.0.0", () => {
