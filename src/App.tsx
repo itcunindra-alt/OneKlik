@@ -649,6 +649,7 @@ export default function App() {
 
   // Settings & Custom API Key States
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
+  const [settingsSaveSuccess, setSettingsSaveSuccess] = useState<string | null>(null);
   const [apiKeyChannel, setApiKeyChannel] = useState<string>(() => {
     return localStorage.getItem("api_key_channel") || "GEMINI";
   });
@@ -671,7 +672,21 @@ export default function App() {
     return stored || "";
   });
 
-  const hasApiKey = apiKeysRaw.split("\n").map(k => k.trim()).filter(k => k.length > 0).length > 0;
+  const checkAnyApiKeyExists = () => {
+    const activeCh = localStorage.getItem("api_key_channel") || apiKeyChannel || "GEMINI";
+    const currentKey = localStorage.getItem(`api_keys_${activeCh}`) || apiKeysRaw;
+    if (currentKey && currentKey.trim().length > 0) return true;
+    const geminiKey = localStorage.getItem("api_keys_GEMINI");
+    const openrouterKey = localStorage.getItem("api_keys_OPENROUTER");
+    const openagenticKey = localStorage.getItem("api_keys_OPENAGENTIC");
+    return Boolean(
+      (geminiKey && geminiKey.trim().length > 0) ||
+      (openrouterKey && openrouterKey.trim().length > 0) ||
+      (openagenticKey && openagenticKey.trim().length > 0)
+    );
+  };
+
+  const hasApiKey = checkAnyApiKeyExists();
 
   const [apiCreditInfo, setApiCreditInfo] = useState<any>(null);
   const [checkingCredit, setCheckingCredit] = useState<boolean>(false);
@@ -697,6 +712,7 @@ export default function App() {
     setApiModel(finalModel);
     setApiCreditInfo(null);
     setCreditError(null);
+    setSettingsSaveSuccess(null);
   }, [apiKeyChannel]);
 
   const fetchCredit = async () => {
@@ -719,14 +735,14 @@ export default function App() {
         setApiCreditInfo(resData.data || { valid: true });
         return true;
       } else {
-        setCreditError(resData.error || "Gagal memperbarui sisa kredit.");
+        setCreditError(resData.error || "Gagal memeriksa status API Key.");
         setApiCreditInfo(null);
         return false;
       }
     } catch (err: any) {
-      setCreditError("Gagal menghubungkan ke server untuk cek kredit.");
+      setCreditError(null);
       setApiCreditInfo(null);
-      return false;
+      return true;
     } finally {
       setCheckingCredit(false);
     }
@@ -739,21 +755,25 @@ export default function App() {
   }, [showSettingsModal]);
 
   const handleSaveKeys = async () => {
+    localStorage.setItem("api_key_channel", apiKeyChannel);
     localStorage.setItem(`api_keys_${apiKeyChannel}`, apiKeysRaw);
     localStorage.setItem(`api_model_${apiKeyChannel}`, apiModel);
     setServerError(null);
-    const isValid = await fetchCredit();
-    if (isValid) {
-      setCopiedStatus("Kunci Tersimpan & Valid!");
-      setTimeout(() => setCopiedStatus(null), 2000);
-      // Automatically close modal after a short delay so the user sees the success feedback
-      setTimeout(() => {
-        setShowSettingsModal(false);
-      }, 800);
-    } else {
-      setCopiedStatus("API Key disimpan tapi tidak valid!");
-      setTimeout(() => setCopiedStatus(null), 2000);
+    setNeedsApiKey(false);
+    setSettingsSaveSuccess(`API Key ${apiKeyChannel} berhasil disimpan!`);
+    setCopiedStatus("API Key Berhasil Disimpan!");
+    setTimeout(() => setCopiedStatus(null), 2500);
+
+    // Test in background if key is provided
+    if (apiKeysRaw.trim()) {
+      fetchCredit();
     }
+
+    // Auto-close modal with clean feedback
+    setTimeout(() => {
+      setSettingsSaveSuccess(null);
+      setShowSettingsModal(false);
+    }, 700);
   };
 
   const handleClearKeys = () => {
@@ -761,8 +781,8 @@ export default function App() {
     localStorage.removeItem(`api_keys_${apiKeyChannel}`);
     setApiCreditInfo(null);
     setCreditError(null);
-    setCopiedStatus("Hapus API Key");
-    setTimeout(() => setCopiedStatus(null), 2000);
+    setSettingsSaveSuccess("API Key berhasil dihapus.");
+    setTimeout(() => setSettingsSaveSuccess(null), 2000);
   };
 
   const getAuthHeaders = () => {
@@ -846,12 +866,6 @@ export default function App() {
   // Generate Trending Topics from Gemini Server
   const fetchTrendingTopics = async () => {
     if (!audience) return;
-    if (!hasApiKey) {
-      setServerError("isi apikey dulu baru bisa jalankan aplikasi");
-      setNeedsApiKey(true);
-      setShowSettingsModal(true);
-      return;
-    }
     setLoadingTopics(true);
     setServerError(null);
     try {
@@ -862,6 +876,10 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) {
+        if (data.needsApiKey || data.error?.includes("API Key") || data.error?.includes("GEMINI_API_KEY")) {
+          setNeedsApiKey(true);
+          setShowSettingsModal(true);
+        }
         throw new Error(data.error || "Gagal mendapatkan topik dari AI.");
       }
       setTopicSuggestions(data);
@@ -870,6 +888,7 @@ export default function App() {
       setServerError(err.message || "Gagal menghubungkan ke server.");
       if (err.message?.includes("API Key") || err.message?.includes("GEMINI_API_KEY")) {
         setNeedsApiKey(true);
+        setShowSettingsModal(true);
       }
     } finally {
       setLoadingTopics(false);
@@ -879,12 +898,6 @@ export default function App() {
   // Correct and polish user's own topic idea using Gemini
   const handleRefineTopic = async () => {
     if (!topic || !topic.trim()) return;
-    if (!hasApiKey) {
-      setServerError("isi apikey dulu baru bisa jalankan aplikasi");
-      setNeedsApiKey(true);
-      setShowSettingsModal(true);
-      return;
-    }
     setRefiningTopic(true);
     setRefinementStatus("idle");
     setServerError(null);
@@ -896,6 +909,10 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) {
+        if (data.needsApiKey || data.error?.includes("API Key") || data.error?.includes("GEMINI_API_KEY")) {
+          setNeedsApiKey(true);
+          setShowSettingsModal(true);
+        }
         throw new Error(data.error || "Gagal mengkoreksi topik");
       }
       if (data.success && data.refinedTopic) {
@@ -909,6 +926,10 @@ export default function App() {
       console.error(err);
       setServerError(err.message || "Gagal mengkoreksi topik");
       setRefinementStatus("error");
+      if (err.message?.includes("API Key") || err.message?.includes("GEMINI_API_KEY")) {
+        setNeedsApiKey(true);
+        setShowSettingsModal(true);
+      }
       setTimeout(() => setRefinementStatus("idle"), 3000);
     } finally {
       setRefiningTopic(false);
@@ -920,12 +941,6 @@ export default function App() {
     if (!audience || !topic || !genre) return;
     if (audience === "custom" && !customAudience.trim()) return;
     if (genre === "Kustom" && !customGenre.trim()) return;
-    if (!hasApiKey) {
-      setServerError("isi apikey dulu baru bisa jalankan aplikasi");
-      setNeedsApiKey(true);
-      setShowSettingsModal(true);
-      return;
-    }
     setLoadingScript(true);
     setServerError(null);
 
@@ -952,6 +967,10 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) {
+        if (data.needsApiKey || data.error?.includes("API Key") || data.error?.includes("GEMINI_API_KEY")) {
+          setNeedsApiKey(true);
+          setShowSettingsModal(true);
+        }
         throw new Error(data.error || "Gagal memformulasikan skenario cerita.");
       }
       setScript(data);
@@ -962,6 +981,10 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       setServerError(err.message || "Terjadi kendala pada formulasi naskah.");
+      if (err.message?.includes("API Key") || err.message?.includes("GEMINI_API_KEY")) {
+        setNeedsApiKey(true);
+        setShowSettingsModal(true);
+      }
     } finally {
       clearInterval(interval);
       setLoadingScript(false);
@@ -971,12 +994,6 @@ export default function App() {
   // Generate Image Prompts based on Script
   const generateImagePrompts = async () => {
     if (!script) return;
-    if (!hasApiKey) {
-      setServerError("isi apikey dulu baru bisa jalankan aplikasi");
-      setNeedsApiKey(true);
-      setShowSettingsModal(true);
-      return;
-    }
     setLoadingImagePrompts(true);
     setServerError(null);
     try {
@@ -995,6 +1012,10 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) {
+        if (data.needsApiKey || data.error?.includes("API Key") || data.error?.includes("GEMINI_API_KEY")) {
+          setNeedsApiKey(true);
+          setShowSettingsModal(true);
+        }
         throw new Error(data.error || "Gagal mengoptimasi prompt gambar.");
       }
       setImagePrompts(data);
@@ -1002,6 +1023,10 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       setServerError(err.message || "Gagal membuat daftar prompt gambar.");
+      if (err.message?.includes("API Key") || err.message?.includes("GEMINI_API_KEY")) {
+        setNeedsApiKey(true);
+        setShowSettingsModal(true);
+      }
     } finally {
       setLoadingImagePrompts(false);
     }
@@ -1010,12 +1035,6 @@ export default function App() {
   // Generate Video Prompts based on Script and Image Prompts
   const generateVideoPrompts = async () => {
     if (!script) return;
-    if (!hasApiKey) {
-      setServerError("isi apikey dulu baru bisa jalankan aplikasi");
-      setNeedsApiKey(true);
-      setShowSettingsModal(true);
-      return;
-    }
     setLoadingVideoPrompts(true);
     setServerError(null);
     try {
@@ -1035,6 +1054,10 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) {
+        if (data.needsApiKey || data.error?.includes("API Key") || data.error?.includes("GEMINI_API_KEY")) {
+          setNeedsApiKey(true);
+          setShowSettingsModal(true);
+        }
         throw new Error(data.error || "Gagal menghasilkan prompt video.");
       }
       setVideoPrompts(data);
@@ -3303,6 +3326,14 @@ export default function App() {
                     )}
                   </div>
                 </>
+              )}
+
+              {/* Success notification banner inside modal */}
+              {settingsSaveSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <CheckCircle className="w-4 h-4 shrink-0 text-emerald-500" />
+                  <span>{settingsSaveSuccess}</span>
+                </div>
               )}
 
               {/* Textarea for API Key */}

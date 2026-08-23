@@ -12,7 +12,7 @@ dotenv.config();
 
 // User Database and Token Helpers
 const USERS_FILE = process.env.NETLIFY || process.env.VERCEL ? path.join("/tmp", "users.json") : path.join(process.cwd(), "users.json");
-const FIREBASE_CONFIG_FILE = process.env.NETLIFY ? path.resolve(__dirname, "firebase-applet-config.json") : path.join(process.cwd(), "firebase-applet-config.json");
+const FIREBASE_CONFIG_FILE = path.join(process.cwd(), "firebase-applet-config.json");
 let db: any = null;
 let isFirestoreAvailable = true;
 
@@ -249,35 +249,46 @@ async function generateAiContent(
       let actualModel = modelId;
       if (!actualModel) {
         if (channel === "OPENROUTER") {
-          // OpenRouter has a default
           actualModel = "google/gemma-4-31b-it:free";
+        } else if (channel === "OPENAGENTIC") {
+          actualModel = "glm-5";
         } else {
-          throw new Error(`Model AI belum diisi. Silakan isi custom model ID untuk ${channel} di menu pengaturan (misalnya 'gemini-3.1-pro').`);
+          actualModel = "google/gemma-4-31b-it:free";
         }
       }
       
-      const payload: any = {
-        model: actualModel || "google/gemma-4-31b-it:free",
-        messages: [{ role: "user", content: prompt }],
-        temperature: temperature ?? 0.8,
-        max_tokens: 8000,
-        stream: false,
+      const sendRequest = async (includeResponseFormat: boolean) => {
+        const payload: any = {
+          model: actualModel,
+          messages: [{ role: "user", content: prompt }],
+          temperature: temperature ?? 0.8,
+          max_tokens: 8000,
+          stream: false,
+        };
+
+        if (includeResponseFormat && responseMimeType === "application/json") {
+          payload.response_format = { type: "json_object" };
+        }
+
+        console.log(`[${channel}] Calling model: ${actualModel}`);
+        return await fetch(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${finalApiKey}`,
+            ...(channel === "OPENROUTER" && { "HTTP-Referer": "https://aistudio.google.com", "X-Title": "AKAR Story Engine" })
+          },
+          body: JSON.stringify(payload)
+        });
       };
 
-      if (responseMimeType === "application/json") {
-        payload.response_format = { type: "json_object" };
-      }
+      let response = await sendRequest(true);
 
-      console.log(`[${channel}] Calling model: ${actualModel}`);
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${finalApiKey}`,
-          ...(channel === "OPENROUTER" && { "HTTP-Referer": "https://aistudio.google.com", "X-Title": "AKAR Story Engine" })
-        },
-        body: JSON.stringify(payload)
-      });
+      // If 400 with response_format unsupported, retry without response_format
+      if (!response.ok && response.status === 400 && responseMimeType === "application/json") {
+        console.log(`[${channel}] 400 error on structured output, retrying without response_format...`);
+        response = await sendRequest(false);
+      }
 
       if (!response.ok) {
         const errText = await response.text();
@@ -300,9 +311,7 @@ async function generateAiContent(
         try {
           data = JSON.parse(rawText);
         } catch (parseError: any) {
-          // AI endpoints sometimes add trailing spaces or stream artifacts
           try {
-            // Find first { and last } to extract JSON
             const firstBrace = rawText.indexOf("{");
             const lastBrace = rawText.lastIndexOf("}");
             if (firstBrace !== -1 && lastBrace > firstBrace) {
@@ -566,6 +575,14 @@ export async function createServerApp() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Normalize route prefix if rewritten by serverless platforms (Vercel/Netlify)
+  app.use((req, res, next) => {
+    if (!req.url.startsWith("/api") && req.url !== "/" && req.url !== "/index.html") {
+      req.url = `/api${req.url}`;
+    }
+    next();
+  });
 
   // API: Health check
   app.get("/api/health", (req, res) => {
