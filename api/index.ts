@@ -1,13 +1,17 @@
-import serverless from 'serverless-http';
 import { createServerApp } from '../server';
 
-let handlerInstance: any = null;
+let appPromise: Promise<any> | null = null;
 
 export default async function handler(req: any, res: any) {
-  if (!handlerInstance) {
-    const app = await createServerApp();
-    handlerInstance = serverless(app);
+  try {
+    if (!appPromise) {
+      appPromise = createServerApp();
+    }
+    const app = await appPromise;
+    return app(req, res);
+  } catch (err: any) {
+    console.error("Vercel Serverless Function Error:", err);
+    res.status(500).json({ error: err.message || "Internal Server Error" });
   }
-  return handlerInstance(req, res);
 }
 

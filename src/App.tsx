@@ -429,14 +429,20 @@ export default function App() {
           "Authorization": `Bearer ${token}`
         }
       });
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        const text = await res.text().catch(() => "");
+        data = { error: text || `Server error (${res.status})` };
+      }
       if (res.ok && data.success) {
         setUsersList(data.users);
       } else {
         setAdminError(data.error || "Gagal mengambil daftar pengguna.");
       }
-    } catch (err) {
-      setAdminError("Koneksi gagal.");
+    } catch (err: any) {
+      setAdminError(err.message ? `Koneksi gagal: ${err.message}` : "Koneksi gagal.");
     } finally {
       setAdminLoading(false);
     }
