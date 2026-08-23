@@ -168,7 +168,7 @@ interface VideoPrompt {
 
 const OPENROUTER_MODELS = [
   { group: "Free", options: [
-    { label: "Llama 3.3 70B (free)", value: "meta-llama/llama-3.3-70b-instruct:free" },
+    { label: "Llama 3.3 70B (Paid)", value: "meta-llama/llama-3.3-70b-instruct" },
     { label: "Nemotron 3 Ultra 550B (free)", value: "nvidia/nemotron-3-ultra-550b-a55b:free" },
     { label: "GPT-OSS 20B (free)", value: "openai/gpt-oss-20b:free" },
     { label: "Gemma 4 31B (free)", value: "google/gemma-4-31b-it:free" },
@@ -644,10 +644,10 @@ export default function App() {
   // Settings & Custom API Key States
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [apiKeyChannel, setApiKeyChannel] = useState<string>(() => {
-    return localStorage.getItem("api_key_channel") || "OPENAGENTIC";
+    return localStorage.getItem("api_key_channel") || "GEMINI";
   });
   const [apiKeysRaw, setApiKeysRaw] = useState<string>(() => {
-    const channel = localStorage.getItem("api_key_channel") || "OPENAGENTIC";
+    const channel = localStorage.getItem("api_key_channel") || "GEMINI";
     let stored = localStorage.getItem(`api_keys_${channel}`);
     if (!stored && channel === "OPENAGENTIC") {
       stored = "sk-b539c4d906aaaddabc42726553afb3a2684cb119fcd65c11d7abae498928e444";
@@ -656,7 +656,7 @@ export default function App() {
     return stored || "";
   });
   const [apiModel, setApiModel] = useState<string>(() => {
-    const channel = localStorage.getItem("api_key_channel") || "OPENAGENTIC";
+    const channel = localStorage.getItem("api_key_channel") || "GEMINI";
     let stored = localStorage.getItem(`api_model_${channel}`);
     if (!stored && channel === "OPENAGENTIC") {
       stored = "glm-5";
@@ -760,7 +760,7 @@ export default function App() {
   };
 
   const getAuthHeaders = () => {
-    const activeChannel = localStorage.getItem("api_key_channel") || "OPENAGENTIC";
+    const activeChannel = localStorage.getItem("api_key_channel") || "GEMINI";
     let savedKeysRaw = localStorage.getItem(`api_keys_${activeChannel}`);
     if (!savedKeysRaw && activeChannel === "OPENAGENTIC") {
       savedKeysRaw = "sk-b539c4d906aaaddabc42726553afb3a2684cb119fcd65c11d7abae498928e444";
@@ -773,8 +773,8 @@ export default function App() {
     }
     activeModel = activeModel || "";
 
-    if (activeModel.includes("1.5")) {
-      activeModel = activeChannel === "OPENROUTER" ? "google/gemini-2.5-flash" : "gemini-2.5-flash";
+    if (activeModel.includes("1.5") || activeModel === "google/gemini-2.5-flash") {
+      activeModel = activeChannel === "OPENROUTER" ? "google/gemma-4-31b-it:free" : "gemini-2.5-flash";
     }
 
     const headers: Record<string, string> = {

@@ -20,32 +20,39 @@ function getDb() {
   if (!isFirestoreAvailable) return null;
   if (db) return db;
   try {
+    const saStr = process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT;
+    let config: any = {};
     if (fs.existsSync(FIREBASE_CONFIG_FILE)) {
-      const config = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_FILE, "utf-8"));
-      const saStr = process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT;
-      if (getApps().length === 0) {
-        if (saStr) {
-          initializeApp({
-            credential: cert(JSON.parse(saStr)),
-            // If they provided a custom service account, they likely want the default database in that project
-            projectId: JSON.parse(saStr).project_id || config.projectId
-          });
-        } else {
-          initializeApp({
-            projectId: config.projectId,
-          });
-        }
-      }
-      if (config.firestoreDatabaseId && !process.env.CUSTOM_FIREBASE_SERVICE_ACCOUNT && !process.env.FIREBASE_SERVICE_ACCOUNT) {
-        db = getFirestore(getApps()[0], config.firestoreDatabaseId);
-      } else {
-        db = getFirestore();
-      }
-      console.log("Firebase Admin successfully initialized.");
-    } else {
-      console.warn("firebase-applet-config.json not found, falling back to local users.json");
+      config = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_FILE, "utf-8"));
+    } else if (!saStr) {
+      console.warn("firebase-applet-config.json not found and no service account provided, falling back to local users.json");
       isFirestoreAvailable = false;
+      return null;
     }
+
+    if (getApps().length === 0) {
+      if (saStr) {
+        const saJson = JSON.parse(saStr);
+        initializeApp({
+          credential: cert(saJson),
+          projectId: saJson.project_id || config.projectId
+        });
+      } else {
+        if (process.env.VERCEL || process.env.NETLIFY) {
+           throw new Error("Missing FIREBASE_SERVICE_ACCOUNT in Vercel.");
+        }
+        initializeApp({
+          projectId: config.projectId,
+        });
+      }
+    }
+    
+    if (config.firestoreDatabaseId && !saStr) {
+      db = getFirestore(getApps()[0], config.firestoreDatabaseId);
+    } else {
+      db = getFirestore();
+    }
+    console.log("Firebase Admin successfully initialized.");
   } catch (err) {
     console.error("Failed to initialize Firebase Admin:", err);
     isFirestoreAvailable = false;
@@ -243,14 +250,14 @@ async function generateAiContent(
       if (!actualModel) {
         if (channel === "OPENROUTER") {
           // OpenRouter has a default
-          actualModel = "google/gemini-2.5-flash";
+          actualModel = "google/gemma-4-31b-it:free";
         } else {
           throw new Error(`Model AI belum diisi. Silakan isi custom model ID untuk ${channel} di menu pengaturan (misalnya 'gemini-3.1-pro').`);
         }
       }
       
       const payload: any = {
-        model: actualModel || "google/gemini-2.5-flash",
+        model: actualModel || "google/gemma-4-31b-it:free",
         messages: [{ role: "user", content: prompt }],
         temperature: temperature ?? 0.8,
         max_tokens: 8000,
@@ -280,39 +287,49 @@ async function generateAiContent(
           if (parsed.error?.message) formattedMsg = parsed.error.message;
           else if (parsed.message) formattedMsg = parsed.message;
         } catch (_) {}
-        throw new Error(`[${channel}] Error ${response.status}: ${formattedMsg}`);
-      }
-
-      const rawText = await response.text();
-      let data;
-      try {
-        data = JSON.parse(rawText);
-      } catch (parseError: any) {
-        // AI endpoints sometimes add trailing spaces or stream artifacts
-        try {
-          // Find first { and last } to extract JSON
-          const firstBrace = rawText.indexOf("{");
-          const lastBrace = rawText.lastIndexOf("}");
-          if (firstBrace !== -1 && lastBrace > firstBrace) {
-            data = JSON.parse(rawText.substring(firstBrace, lastBrace + 1));
-          } else {
-            throw parseError;
-          }
-        } catch (e) {
-          throw new Error(`[${channel}] JSON parsing failed: ` + parseError.message);
+        
+        if (response.status === 429 && channel === "OPENROUTER") {
+          console.log("[OPENROUTER] Rate limited (429). Automatically falling back to GEMINI.");
+          // We don't throw, we let it fall through to the Gemini logic outside this block
+        } else {
+          throw new Error(`[${channel}] Error ${response.status}: ${formattedMsg}`);
         }
-      }
+      } else {
+        const rawText = await response.text();
+        let data;
+        try {
+          data = JSON.parse(rawText);
+        } catch (parseError: any) {
+          // AI endpoints sometimes add trailing spaces or stream artifacts
+          try {
+            // Find first { and last } to extract JSON
+            const firstBrace = rawText.indexOf("{");
+            const lastBrace = rawText.lastIndexOf("}");
+            if (firstBrace !== -1 && lastBrace > firstBrace) {
+              data = JSON.parse(rawText.substring(firstBrace, lastBrace + 1));
+            } else {
+              throw parseError;
+            }
+          } catch (e) {
+            throw new Error(`[${channel}] JSON parsing failed: ` + parseError.message);
+          }
+        }
 
-      if (data.choices && data.choices[0] && data.choices[0].message) {
-        return data.choices[0].message.content;
+        if (data.choices && data.choices[0] && data.choices[0].message) {
+          return data.choices[0].message.content;
+        }
+        throw new Error(`[${channel}] Invalid response format: ${JSON.stringify(data)}`);
       }
-      throw new Error(`[${channel}] Invalid response format: ${JSON.stringify(data)}`);
     }
   }
 
-  // Fallback to Gemini
+  // Fallback to Gemini (used natively, or as a fallback if OpenRouter 429s)
+  const geminiKey = process.env.GEMINI_API_KEY || finalApiKey;
+  if (!geminiKey) {
+     throw new Error("API Key belum dikonfigurasi.");
+  }
   const client = new GoogleGenAI({
-    apiKey: finalApiKey,
+    apiKey: geminiKey,
     httpOptions: {
       headers: {
         "User-Agent": "aistudio-build",
@@ -577,6 +594,10 @@ export async function createServerApp() {
   // Admin and Auth Middlewares & Endpoints
   const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     try {
+      if (!isFirestoreAvailable && (process.env.VERCEL || process.env.NETLIFY)) {
+        return res.status(500).json({ success: false, error: "Firebase Service Account tidak ditemukan di server Vercel. Silakan copy variabel 'FIREBASE_SERVICE_ACCOUNT' dari AI Studio ke pengaturan Environment Variables project Vercel Anda, lalu redeploy." });
+      }
+      
       const authHeader = req.headers["authorization"];
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         return res.status(401).json({ success: false, error: "Akses ditolak. Diperlukan autentikasi." });
